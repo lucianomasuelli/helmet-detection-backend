@@ -2,10 +2,15 @@ import asyncio
 import websockets
 
 async def test_websocket():
-    uri = "ws://localhost:8001"
+    uri = "ws://localhost:8000/ws"
     async with websockets.connect(uri) as websocket:
+        print("Conectado al WebSocket")
+        # Sends url to the server
+        await websocket.send("https://www.youtube.com/watch?v=NYYwT_7WFlc&ab_channel=Carspottingmrgold")
+
+        # Recibe detections from the server
         while True:
-            message = await websocket.recv()
-            print("Datos recibidos:", message)
+            response = await websocket.recv()
+            print("Detección recibida:", response)
 
 asyncio.run(test_websocket())

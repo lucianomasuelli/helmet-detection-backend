@@ -1,31 +1,43 @@
-import cv2
-import torch
 import asyncio
-import websockets
+import cv2
+import sys
 from ultralytics import YOLO
+import yt_dlp
 
-# Cargar el modelo YOLOv8
-model = YOLO("yolov8n.pt")  # Reemplazar con tu modelo entrenado
+model = YOLO("yolov8n.pt")
 
-# URL del stream de video (o ruta del archivo)
-video_path = '/home/luciano/Descargas/motorbikes.mp4'  # 0 para webcam, o 'ruta/al/video.mp4' para un video
+def get_video_stream_url(youtube_url):
+    # Gets the direct stream URL using yt-dlp from YouTube link
+    ydl_opts = {
+        "format": "best[ext=mp4]",
+        "quiet": True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(youtube_url, download=False)
+        return info["url"] if "url" in info else None
 
-async def detect_and_stream(websocket):
-    cap = cv2.VideoCapture(video_path)
+async def detect(video_url):
+    # Obtains the video stream URL if the input is a YouTube link
+    if "youtube.com" in video_url or "youtu.be" in video_url:
+        video_url = get_video_stream_url(video_url)
+        if not video_url:
+            print("Error: Cannot get video stream URL from YouTube link.")
+            return
+
+    cap = cv2.VideoCapture(video_url)
+
+    motorcycle_count = 0
+    helmet_count = 0
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Realizar la detección
+        # Perform inference
         results = model(frame)
 
-        # Contadores de detección
-        motorcycle_count = 0
-        helmet_count = 0
-
-        # Procesar detecciones
+        # Count the number of motorcycles and helmets detected
         for result in results:
             for box in result.boxes:
                 label = model.names[int(box.cls)]
@@ -44,14 +56,19 @@ async def detect_and_stream(websocket):
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-        # Enviar datos al frontend en formato JSON
-        await websocket.send(str({"motorcycles": motorcycle_count, "helmets": helmet_count}))
+        # Send the detection counts to the server
+        print(str({"motorcycles": motorcycle_count, "helmets": helmet_count}))
 
     cap.release()
 
-async def websocket_server():
-    async with websockets.serve(detect_and_stream, "localhost", 8001):
-        await asyncio.Future()  # Mantiene el servidor en ejecución
+async def main():
+    video_url = sys.argv[1]
+    print(f"Procesando video: {video_url}")
+    await detect(video_url)
 
 if __name__ == "__main__":
-    asyncio.run(websocket_server())
+    if len(sys.argv) < 2:
+        print("Error: No se proporcionó una URL de video.")
+        sys.exit(1)
+
+    asyncio.run(main())
