@@ -1,13 +1,15 @@
 import asyncio
 import cv2
 import sys
+import json
 from ultralytics import YOLO
 import yt_dlp
+import websockets
 
 model = YOLO("yolov8n.pt")
 
+# gets the video stream URL from a YouTube link
 def get_video_stream_url(youtube_url):
-    # Gets the direct stream URL using yt-dlp from YouTube link
     ydl_opts = {
         "format": "best[ext=mp4]",
         "quiet": True,
@@ -16,8 +18,8 @@ def get_video_stream_url(youtube_url):
         info = ydl.extract_info(youtube_url, download=False)
         return info["url"] if "url" in info else None
 
-async def detect(video_url):
-    # Obtains the video stream URL if the input is a YouTube link
+
+async def detect(video_url, websocket):
     if "youtube.com" in video_url or "youtu.be" in video_url:
         video_url = get_video_stream_url(video_url)
         if not video_url:
@@ -26,18 +28,15 @@ async def detect(video_url):
 
     cap = cv2.VideoCapture(video_url)
 
-    motorcycle_count = 0
-    helmet_count = 0
-
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Perform inference
         results = model(frame)
 
-        # Count the number of motorcycles and helmets detected
+        motorcycle_count = 0
+        helmet_count = 0
         for result in results:
             for box in result.boxes:
                 label = model.names[int(box.cls)]
@@ -46,29 +45,28 @@ async def detect(video_url):
                 elif label == "helmet":
                     helmet_count += 1
 
-        # Visualize the results on the frame
         annotated_frame = results[0].plot()
+        _, buffer = cv2.imencode('.jpg', annotated_frame)
+        frame_bytes = buffer.tobytes()
 
-        # Display the annotated frame
-        cv2.imshow("YOLO Inference", annotated_frame)
-
-        # Break the loop if 'q' is pressed
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-        # Send the detection counts to the server
-        print(str({"motorcycles": motorcycle_count, "helmets": helmet_count}))
+        data = {
+            "motorcycles": motorcycle_count,
+            "helmets": helmet_count,
+            "frame": frame_bytes.hex()
+        }
+        await websocket.send(json.dumps(data))
 
     cap.release()
 
-async def main():
-    video_url = sys.argv[1]
-    print(f"Procesando video: {video_url}")
-    await detect(video_url)
+
+async def websocket_server():
+    async with websockets.serve(handler, "localhost", 8765):
+        await asyncio.Future()
+
+async def handler(websocket):
+    async for video_url in websocket:
+        print(f"Procesando video: {video_url}")
+        await detect(video_url, websocket)
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Error: No se proporcionó una URL de video.")
-        sys.exit(1)
-
-    asyncio.run(main())
+    asyncio.run(websocket_server())

@@ -1,8 +1,12 @@
 from fastapi import FastAPI, WebSocket
-import subprocess
 import asyncio
+import websockets
+import subprocess
 
 app = FastAPI()
+
+# Iniciar detector.py como subproceso
+detector_process = subprocess.Popen(["python", "detector.py"])
 
 
 @app.get("/")
@@ -16,26 +20,23 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # Gets the video URL from the client
+            # Recibe la URL del video desde el cliente
             video_url = await websocket.receive_text()
 
-            # Start the detector process
-            process = subprocess.Popen(["python", "detector.py", video_url], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Conectar con detector.py mediante WebSockets
+            async with websockets.connect("ws://localhost:8765") as detector_ws:
+                await detector_ws.send(video_url)
 
-            print("Detector iniciado")
-            # Send detections to the client
-            while True:
-                output = process.stdout.readline()
-                if output:
-                    print("Detección enviada:", output.strip())
-                    await websocket.send_text(output.strip())
-                elif process.poll() is not None:
-                    break
+                # Recibir y reenviar detecciones
+                while True:
+                    detection_data = await detector_ws.recv()
+                    print("Detección recibida y enviada al frontend:", detection_data)
+                    await websocket.send_text(detection_data)
 
     except Exception as e:
         print(f"Error en WebSocket: {e}")
     finally:
-        process.terminate()
+        print("Conexión cerrada")
 
 
 if __name__ == "__main__":
