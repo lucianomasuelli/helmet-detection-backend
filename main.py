@@ -24,7 +24,7 @@ async def websocket_endpoint(websocket: WebSocket):
             video_url = await websocket.receive_text()
 
             # Conectar con detector.py mediante WebSockets
-            async with websockets.connect("ws://localhost:8765") as detector_ws:
+            async with websockets.connect("ws://localhost:8760") as detector_ws:
                 await detector_ws.send(video_url)
 
                 # Recibir y reenviar detecciones

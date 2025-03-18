@@ -6,7 +6,7 @@ from ultralytics import YOLO
 import yt_dlp
 import websockets
 
-model = YOLO("yolov8n.pt")
+model = YOLO("best.pt")
 
 # gets the video stream URL from a YouTube link
 def get_video_stream_url(youtube_url):
@@ -40,9 +40,9 @@ async def detect(video_url, websocket):
         for result in results:
             for box in result.boxes:
                 label = model.names[int(box.cls)]
-                if label == "motorcycle":
+                if label == "motorbike":
                     motorcycle_count += 1
-                elif label == "helmet":
+                elif label == "DHelmet":
                     helmet_count += 1
 
         annotated_frame = results[0].plot()
@@ -60,7 +60,7 @@ async def detect(video_url, websocket):
 
 
 async def websocket_server():
-    async with websockets.serve(handler, "localhost", 8765):
+    async with websockets.serve(handler, "localhost", 8760):
         await asyncio.Future()
 
 async def handler(websocket):
