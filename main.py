@@ -1,45 +1,146 @@
-from fastapi import FastAPI, WebSocket
-import asyncio
-import websockets
-import subprocess
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+import cv2
+import numpy as np
+import tempfile
+import shutil
+from ultralytics import YOLO
+import os
+from datetime import datetime
+import json
 
 app = FastAPI()
 
-# Iniciar detector.py como subproceso
-detector_process = subprocess.Popen(["python", "detector.py"])
+# Configuración de CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite todas las origenes
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos los métodos
+    allow_headers=["*"],  # Permite todos los headers
+)
 
+model = YOLO("best.pt")  # Cargar modelo YOLOv8 preentrenado
 
-@app.get("/")
-def read_root():
-    return {"message": "Servidor FastAPI para detección de motocicletas y cascos"}
+VIDEO_OUTPUT_DIR = "videos"
+os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)  # Crear directorio si no existe
 
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-
+@app.post("/upload/")
+async def upload_video(file: UploadFile = File(...)):
     try:
-        while True:
-            # Recibe la URL del video desde el cliente
-            video_url = await websocket.receive_text()
+        # Verificar que el archivo sea un video
+        if not file.content_type.startswith('video/'):
+            raise HTTPException(status_code=400, detail="El archivo debe ser un video")
 
-            # Conectar con detector.py mediante WebSockets
-            async with websockets.connect("ws://localhost:8760") as detector_ws:
-                await detector_ws.send(video_url)
+        # Crear nombre único para el archivo
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        temp_filename = f"temp_{timestamp}_{file.filename}"
+        output_filename = f"processed_{timestamp}_{file.filename}"
+        
+        temp_video_path = os.path.join(VIDEO_OUTPUT_DIR, temp_filename)
+        output_video_path = os.path.join(VIDEO_OUTPUT_DIR, output_filename)
 
-                # Recibir y reenviar detecciones
-                while True:
-                    detection_data = await detector_ws.recv()
-                    print("Detección recibida y enviada al frontend:", detection_data)
-                    await websocket.send_text(detection_data)
+        # Guardar el archivo temporal
+        with open(temp_video_path, "wb") as temp_video:
+            shutil.copyfileobj(file.file, temp_video)
 
+        # Procesar el video
+        process_video(temp_video_path, output_video_path)
+
+        # Eliminar el archivo temporal
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+
+        return {
+            "video_url": f"/videos/{output_filename}",
+            "filename": output_filename
+        }
     except Exception as e:
-        print(f"Error en WebSocket: {e}")
-    finally:
-        print("Conexión cerrada")
+        print(f"Error al procesar el video: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/videos/{video_filename}")
+async def get_video(video_filename: str):
+    try:
+        video_path = os.path.join(VIDEO_OUTPUT_DIR, video_filename)
+        
+        # Verificar que el archivo existe
+        if not os.path.exists(video_path):
+            raise HTTPException(status_code=404, detail="Video no encontrado")
+            
+        # Verificar que el archivo es accesible
+        if not os.access(video_path, os.R_OK):
+            raise HTTPException(status_code=403, detail="No se puede acceder al video")
+            
+        # Verificar que el archivo es un video válido
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="El archivo no es un video válido")
+        cap.release()
+        
+        return FileResponse(
+            video_path,
+            media_type="video/mp4",
+            filename=video_filename,
+            headers={
+                "Content-Disposition": f"attachment; filename={video_filename}"
+            }
+        )
+    except Exception as e:
+        print(f"Error al servir el video: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def process_video(input_path, output_path):
+    try:
+        cap = cv2.VideoCapture(input_path)
+        if not cap.isOpened():
+            raise Exception("No se pudo abrir el video de entrada")
+
+        # Obtener propiedades del video
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        print(f"Procesando video: {fps}fps, {width}x{height}")
+
+        # Usar codec H.264 para mejor compatibilidad
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        if not out.isOpened():
+            raise Exception("No se pudo crear el video de salida")
+
+        frame_count = 0
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            results = model(frame)
+            
+            # Dibujar detecciones en el frame
+            annotated_frame = results[0].plot()
+            
+            # Guardar frame procesado
+            out.write(annotated_frame)
+            frame_count += 1
+            
+            if frame_count % 100 == 0:
+                print(f"Frames procesados: {frame_count}")
+
+        print(f"Procesamiento completado. Total frames: {frame_count}")
+        
+    except Exception as e:
+        print(f"Error en process_video: {str(e)}")
+        raise
+    finally:
+        if 'cap' in locals():
+            cap.release()
+        if 'out' in locals():
+            out.release()
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
