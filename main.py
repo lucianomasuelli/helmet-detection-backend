@@ -10,6 +10,8 @@ import os
 from datetime import datetime
 import json
 import atexit
+import yt_dlp
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -27,6 +29,29 @@ model = YOLO("best.pt")  # Cargar modelo YOLOv8 preentrenado
 VIDEO_OUTPUT_DIR = "videos"
 os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)  # Crear directorio si no existe
 
+class YouTubeURL(BaseModel):
+    url: str
+
+def download_youtube_video(url: str) -> str:
+    """Descarga un video de YouTube y retorna la ruta del archivo"""
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"youtube_{timestamp}.mp4"
+        output_path = os.path.join(VIDEO_OUTPUT_DIR, output_filename)
+        
+        ydl_opts = {
+            'format': 'best[ext=mp4]',
+            'outtmpl': output_path,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+            
+        return output_path
+    except Exception as e:
+        print(f"Error al descargar video de YouTube: {e}")
+        raise Exception(f"Error al descargar video de YouTube: {e}")
+
 def cleanup_videos():
     """Limpia todos los archivos en la carpeta de videos"""
     try:
@@ -43,6 +68,34 @@ def cleanup_videos():
 
 # Registrar la función de limpieza para que se ejecute al detener el servidor
 atexit.register(cleanup_videos)
+
+@app.post("/process-youtube/")
+async def process_youtube_video(youtube_data: YouTubeURL):
+    try:
+        # Descargar el video de YouTube
+        print(f"Descargando video de YouTube: {youtube_data.url}")
+        input_path = download_youtube_video(youtube_data.url)
+        
+        # Crear nombre para el archivo procesado
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"processed_youtube_{timestamp}.mp4"
+        output_path = os.path.join(VIDEO_OUTPUT_DIR, output_filename)
+        
+        # Procesar el video
+        print("Iniciando procesamiento del video...")
+        process_video(input_path, output_path)
+        
+        # Eliminar el video original de YouTube
+        if os.path.exists(input_path):
+            os.remove(input_path)
+            
+        return {
+            "video_url": f"/videos/{output_filename}",
+            "filename": output_filename
+        }
+    except Exception as e:
+        print(f"Error al procesar video de YouTube: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload/")
 async def upload_video(file: UploadFile = File(...)):
