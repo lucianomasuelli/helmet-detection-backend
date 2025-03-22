@@ -9,6 +9,7 @@ from ultralytics import YOLO
 import os
 from datetime import datetime
 import json
+import atexit
 
 app = FastAPI()
 
@@ -25,6 +26,23 @@ model = YOLO("best.pt")  # Cargar modelo YOLOv8 preentrenado
 
 VIDEO_OUTPUT_DIR = "videos"
 os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)  # Crear directorio si no existe
+
+def cleanup_videos():
+    """Limpia todos los archivos en la carpeta de videos"""
+    try:
+        for filename in os.listdir(VIDEO_OUTPUT_DIR):
+            file_path = os.path.join(VIDEO_OUTPUT_DIR, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                print(f"Error al eliminar {file_path}: {e}")
+        print("Carpeta de videos limpiada exitosamente")
+    except Exception as e:
+        print(f"Error al limpiar la carpeta de videos: {e}")
+
+# Registrar la función de limpieza para que se ejecute al detener el servidor
+atexit.register(cleanup_videos)
 
 @app.post("/upload/")
 async def upload_video(file: UploadFile = File(...)):
