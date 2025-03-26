@@ -2,13 +2,10 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
-import numpy as np
-import tempfile
 import shutil
 from ultralytics import YOLO
 import os
 from datetime import datetime
-import json
 import atexit
 import yt_dlp
 from pydantic import BaseModel
