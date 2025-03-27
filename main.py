@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
@@ -9,43 +9,18 @@ from datetime import datetime
 import atexit
 import yt_dlp
 from pydantic import BaseModel
-from starlette.middleware.base import BaseHTTPMiddleware
 
 app = FastAPI()
-
-# Middleware personalizado para logging
-class LoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Obtener información de la petición
-        client_host = request.client.host if request.client else "Unknown"
-        method = request.method
-        url = request.url
-        headers = request.headers
-        
-        # Imprimir información de la petición
-        print(f"\n=== Nueva Petición ===")
-        print(f"Cliente: {client_host}")
-        print(f"Método: {method}")
-        print(f"URL: {url}")
-        print(f"Headers: {dict(headers)}")
-        print("====================\n")
-        
-        # Continuar con la petición
-        response = await call_next(request)
-        return response
-
-# Agregar el middleware de logging
-app.add_middleware(LoggingMiddleware)
 
 # Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],  # Permite todas las origenes
     allow_credentials=True,
-    allow_methods=["*"],  
-    allow_headers=["*"],  
-    expose_headers=["*"]  
+    allow_methods=["*"],  # Permite todos los métodos
+    allow_headers=["*"],  # Permite todos los headers
 )
+
 model = YOLO("best.pt")  # Cargar modelo YOLOv8 preentrenado
 
 VIDEO_OUTPUT_DIR = "videos"
@@ -122,13 +97,8 @@ async def process_youtube_video(youtube_data: YouTubeURL):
 @app.post("/upload/")
 async def upload_video(file: UploadFile = File(...)):
     try:
-        print(f"\n=== Procesando Upload ===")
-        print(f"Nombre del archivo: {file.filename}")
-        print(f"Tipo de contenido: {file.content_type}")
-        
         # Verificar que el archivo sea un video
         if not file.content_type.startswith('video/'):
-            print("Error: El archivo no es un video")
             raise HTTPException(status_code=400, detail="El archivo debe ser un video")
 
         # Crear nombre único para el archivo
@@ -136,28 +106,20 @@ async def upload_video(file: UploadFile = File(...)):
         temp_filename = f"temp_{timestamp}_{file.filename}"
         output_filename = f"processed_{timestamp}_{file.filename}"
         
-        print(f"Archivo temporal: {temp_filename}")
-        print(f"Archivo de salida: {output_filename}")
-        
         temp_video_path = os.path.join(VIDEO_OUTPUT_DIR, temp_filename)
         output_video_path = os.path.join(VIDEO_OUTPUT_DIR, output_filename)
 
         # Guardar el archivo temporal
         with open(temp_video_path, "wb") as temp_video:
             shutil.copyfileobj(file.file, temp_video)
-        print("Archivo temporal guardado correctamente")
 
         # Procesar el video
-        print("Iniciando procesamiento del video...")
         process_video(temp_video_path, output_video_path)
-        print("Video procesado correctamente")
 
         # Eliminar el archivo temporal
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
-            print("Archivo temporal eliminado")
 
-        print("=== Upload Completado ===\n")
         return {
             "video_url": f"/videos/{output_filename}",
             "filename": output_filename
@@ -210,9 +172,12 @@ def process_video(input_path, output_path):
         
         print(f"Procesando video: {fps}fps, {width}x{height}")
 
-        # Usar codec MJPG para mejor compatibilidad en Docker
+        # Crear un archivo temporal para el video procesado
+        temp_output = output_path.replace('.mp4', '_temp.mp4')
+        
+        # Usar codec MJPG para el procesamiento
         fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
 
         if not out.isOpened():
             raise Exception("No se pudo crear el video de salida")
@@ -238,14 +203,26 @@ def process_video(input_path, output_path):
 
         print(f"Procesamiento completado. Total frames: {frame_count}")
         
-    except Exception as e:
-        print(f"Error en process_video: {str(e)}")
-        raise
-    finally:
+        # Cerrar los recursos
         if 'cap' in locals():
             cap.release()
         if 'out' in locals():
             out.release()
+
+        # Convertir el video a formato compatible con navegadores usando FFmpeg
+        print("Convirtiendo video a formato compatible con navegadores...")
+        os.system(f'ffmpeg -i {temp_output} -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 128k {output_path}')
+        
+        # Eliminar el archivo temporal
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+            print("Archivo temporal eliminado")
+            
+        print("Video convertido exitosamente")
+        
+    except Exception as e:
+        print(f"Error en process_video: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     import uvicorn
