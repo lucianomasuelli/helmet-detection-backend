@@ -159,6 +159,10 @@ async def get_video(video_filename: str):
         print(f"Error al servir el video: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/number/")
+async def get_number():
+    return {"number": 10}
+
 def process_video(input_path, output_path):
     try:
         cap = cv2.VideoCapture(input_path)
